@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mist – voice control for your lights</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  @property --lamp { syntax: "<color>"; inherits: true; initial-value: #aebcc3; }
+  @property --glow { syntax: "<number>"; inherits: true; initial-value: 0.6; }
+
+  :root {
+    --lamp: #ff9329;
+    --glow: 1;
+    --bg: #e8edef;
+    --panel: #f4f7f8;
+    --ink: #17262f;
+    --muted: #55676f;
+    --line: #c6d1d6;
+    --focus: #17262f;
+    transition: --lamp .7s ease, --glow .7s ease;
+    font-family: "Familjen Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background:
+      radial-gradient(ellipse 90% 60% at 50% 42%, color-mix(in srgb, var(--lamp) calc(var(--glow) * 30%), transparent), transparent 70%),
+      var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+
+  .wrap {
+    max-width: 560px; margin: 0 auto;
+    padding: max(20px, env(safe-area-inset-top)) 20px max(32px, env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; min-height: 100%;
+  }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .wordmark { font-weight: 700; font-size: 1.6rem; letter-spacing: -0.02em; margin: 0; }
+  .lamp-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 14px; border-radius: 999px;
+    background: var(--panel); border: 1px solid var(--line);
+    font-weight: 500; font-size: .95rem;
+  }
+  .lamp-pill .dot { width: 9px; height: 9px; border-radius: 50%; background: #9aa9b0; }
+  .lamp-pill[data-linked="true"] .dot { background: #2e9e5b; }
+
+  main { flex: 1; display: flex; flex-direction: column; align-items: center; padding-top: 4vh; }
+
+  .orb-stage { position: relative; display: grid; place-items: center; width: min(68vw, 320px); aspect-ratio: 1; margin: 2vh 0 4vh; }
+  .orb {
+    position: relative; z-index: 1;
+    width: 100%; height: 100%; border: 0; padding: 0; border-radius: 50%; cursor: pointer;
+    background:
+      radial-gradient(circle at 34% 28%, color-mix(in srgb, var(--lamp) 45%, white) 0%, var(--lamp) 52%, color-mix(in srgb, var(--lamp) 72%, #0d1b23) 100%);
+    box-shadow:
+      0 0 calc(var(--glow) * 110px) calc(var(--glow) * 26px) color-mix(in srgb, var(--lamp) 60%, transparent),
+      inset 0 -14px 34px rgba(13, 27, 35, .16);
+    display: grid; place-items: center;
+    transition: transform .25s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .orb:active { transform: scale(.98); }
+  .orb svg { width: 26%; height: 26%; fill: #fff; filter: drop-shadow(0 1px 6px rgba(0,0,0,.25)); transition: opacity .3s; }
+  body:not([data-state="idle"]) .orb svg { opacity: 0; }
+
+  .ring { position: absolute; inset: 0; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--lamp) 70%, #17262f); opacity: 0; pointer-events: none; }
+  body[data-state="listening"] .ring { animation: breathe 3.2s ease-in-out infinite; }
+  body[data-state="awake"] .ring { animation: ping 1.1s ease-out infinite; }
+  body[data-state="awake"] .orb { transform: scale(1.04); }
+  @keyframes breathe { 0%,100% { transform: scale(1.02); opacity: 0; } 50% { transform: scale(1.14); opacity: .45; } }
+  @keyframes ping { 0% { transform: scale(1); opacity: .8; } 100% { transform: scale(1.35); opacity: 0; } }
+
+  .status { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.01em; margin: 0; text-align: center; }
+  .heard { min-height: 1.6em; margin: 8px 0 0; color: var(--muted); text-align: center; font-size: 1.05rem; }
+  .heard.interim { font-style: italic; }
+  .note { min-height: 1.4em; margin: 4px 0 0; text-align: center; font-size: .95rem; color: #8a3b2b; }
+
+  .controls { width: 100%; margin-top: 4vh; background: var(--panel); border: 1px solid var(--line); border-radius: 22px; padding: 18px; display: grid; gap: 18px; }
+  .row { display: flex; align-items: center; gap: 14px; }
+  .row > label { min-width: 84px; font-weight: 500; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 10px; }
+  .swatch { width: 34px; height: 34px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line); cursor: pointer; padding: 0; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+  .seg button { padding: 8px 20px; background: transparent; border: 0; cursor: pointer; font-weight: 500; }
+  .seg button:hover { background: rgba(23,38,47,.06); }
+  input[type=range] { flex: 1; accent-color: var(--ink); height: 28px; }
+  .typebox { display: flex; gap: 8px; }
+  .typebox input { flex: 1; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--line); background: #fff; min-width: 0; }
+  .typebox button { padding: 10px 16px; border-radius: 12px; border: 0; background: var(--ink); color: #fff; cursor: pointer; font-weight: 500; }
+
+  details { width: 100%; margin-top: 16px; color: var(--muted); }
+  summary { cursor: pointer; font-weight: 500; color: var(--ink); }
+  details ul { margin: 10px 0 0; padding-left: 1.1em; line-height: 1.6; }
+  .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--muted); font-size: .95rem; }
+
+  @media (prefers-reduced-motion: reduce) {
+    :root { transition: none; }
+    .ring, .orb { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body data-state="idle">
+<div class="wrap">
+  <header>
+    <h1 class="wordmark">Mist</h1>
+    <span class="lamp-pill" id="lampPill" data-linked="false"><span class="dot"></span><span id="lampLabel">Lamp not connected</span></span>
+  </header>
+
+  <main>
+    <div class="orb-stage">
+      <span class="ring"></span>
+      <button class="orb" id="orb" type="button" aria-label="Start or pause listening">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a4 4 0 0 0 4-4V6a4 4 0 0 0-8 0v5a4 4 0 0 0 4 4Zm-7-4a1 1 0 1 1 2 0 5 5 0 0 0 10 0 1 1 0 1 1 2 0 7 7 0 0 1-6 6.92V20h2a1 1 0 1 1 0 2H9a1 1 0 1 1 0-2h2v-2.08A7 7 0 0 1 5 11Z"/></svg>
+      </button>
+    </div>
+
+    <p class="status" id="status" aria-live="polite">Connecting to Mist…</p>
+    <p class="heard" id="heard" aria-live="polite"></p>
+    <p class="note" id="note" role="status"></p>
+
+    <section class="controls" aria-label="Manual controls">
+      <div class="row">
+        <label>Power</label>
+        <div class="seg" role="group" aria-label="Power">
+          <button type="button" id="btnOn">On</button>
+          <button type="button" id="btnOff">Off</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>Colour</label>
+        <div class="swatches" id="swatches"></div>
+      </div>
+      <div class="row">
+        <label for="bright">Brightness</label>
+        <input type="range" id="bright" min="1" max="100" value="100">
+      </div>
+      <form class="typebox" id="typeForm" autocomplete="off">
+        <input id="typeInput" type="text" placeholder="Type a command, e.g. set the colour to green" aria-label="Type a command">
+        <button type="submit">Run</button>
+      </form>
+    </section>
+
+    <label class="check"><input type="checkbox" id="voiceReplies" checked> Speak replies out loud</label>
+
+    <details>
+      <summary>What you can say</summary>
+      <ul>
+        <li>“Hey Mist, turn the lights on” or “…off”</li>
+        <li>“Hey Mist, set the colour to red” (green, blue, purple, pink, orange, warm, white and more)</li>
+        <li>“Brightness 40”, “dimmer”, “brighter”, “full brightness”</li>
+        <li>“Effect 3”, “next effect”, “faster”, “slower”</li>
+        <li>Say just “Hey Mist”, wait for the reply, then give your command</li>
+        <li>“Stop listening” puts Mist back to sleep</li>
+      </ul>
+    </details>
+  </main>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const root = document.documentElement;
+const COLORS = {
+  red:[255,0,0], orange:[255,100,0], yellow:[255,255,0], green:[0,255,0], cyan:[0,255,255],
+  blue:[0,0,255], purple:[128,0,255], pink:[255,60,150], warm:[255,147,41], white:[255,255,255]
+};
+
+/* Chrome and Edge ship a speech recogniser (Chrome's is Google's). Firefox doesn't, so there the
+   page just displays state and the server listens instead (start it with --server-mic). */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const browserVoice = !!SR;
+
+const STATUS = {
+  idle: browserVoice ? "Tap the orb to start listening" : "Paused. Tap the orb to listen",
+  listening: "Say “Hey Mist”",
+  awake: "Go ahead, I’m listening",
+  offline: "Can’t reach the Mist server"
+};
+
+let ws = null, audioCtx = null, mode = "offline";
+let listening = false, awakeUntil = 0, sleepTimer = null, speaking = false, mutedUntil = 0, rec = null;
+
+/* ---------- rendering ---------- */
+function setMode(m) { mode = m; document.body.dataset.state = m === "offline" ? "idle" : m; $("#status").textContent = STATUS[m]; }
+function setNote(t) { $("#note").textContent = t || ""; }
+function setHeard(t, interim) { const h = $("#heard"); h.textContent = t; h.classList.toggle("interim", !!interim); }
+function render(s) {
+  const [r,g,b] = s.rgb;
+  root.style.setProperty("--lamp", s.on ? `rgb(${r} ${g} ${b})` : "#aebcc3");
+  root.style.setProperty("--glow", s.on ? (0.25 + 0.75 * s.bright / 100).toFixed(2) : "0");
+  $("#bright").value = s.bright;
+  $("#lampPill").dataset.linked = s.connected;
+  $("#lampLabel").textContent = s.connected ? (s.lampName || "Lamp") + " connected" : "Lamp not connected";
+}
+
+/* ---------- talking to the server (which holds the Bluetooth link) ---------- */
+function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+
+function connect() {
+  ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+  ws.onopen = () => { if (mode === "offline") setMode(listening ? "listening" : "idle"); setNote(""); };
+  ws.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (m.type === "state") { render(m); if (!browserVoice) setMode(m.mode); }
+    else if (m.type === "note") setNote(m.text);
+    else if (m.type === "say") speak(m.text);
+    else if (m.type === "result") onResult(m);
+    else if (!browserVoice) {                     // Firefox etc.: mirror what the server microphone hears
+      if (m.type === "heard") setHeard(m.text, m.interim);
+      else if (m.type === "chime") chime();
+    }
+  };
+  ws.onclose = () => { setMode("offline"); setTimeout(connect, 1500); };
+}
+
+/* ---------- sounds ---------- */
+function unlockAudio() {
+  if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+}
+["click", "keydown", "touchstart"].forEach(ev => document.addEventListener(ev, unlockAudio));
+
+function chime() {
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+  [[660, 0], [880, 0.09]].forEach(([f, d]) => {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = "sine"; o.frequency.value = f;
+    g.gain.setValueAtTime(0.0001, now + d);
+    g.gain.exponentialRampToValueAtTime(0.18, now + d + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + d + 0.22);
+    o.connect(g).connect(audioCtx.destination); o.start(now + d); o.stop(now + d + 0.25);
+  });
+}
+
+function speak(text) {
+  mutedUntil = Date.now() + 400 + 80 * text.length;  // cover the gap before the voice starts
+  if (!$("#voiceReplies").checked || !("speechSynthesis" in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  const voices = speechSynthesis.getVoices();
+  u.voice = voices.find(v => v.lang === "en-GB") || voices.find(v => v.lang.startsWith("en")) || null;
+  u.rate = 1.05;
+  u.onstart = () => { speaking = true; send({ type: "speaking", value: true }); };
+  u.onend = u.onerror = () => { speaking = false; mutedUntil = Date.now() + 500; send({ type: "speaking", value: false }); };
+  speechSynthesis.speak(u);
+}
+
+/* ---------- listening for “Hey Mist” (browser speech recognition) ---------- */
+const WAKE = /\b(?:(?:hey|hay|hi|ok|okay|a|hate)\s+(?:mist|misty|missed|miss|mists|mitt|mister|mrs)|mist)\b/;
+const norm = s => s.toLowerCase().replace(/colour/g, "color").replace(/[^a-z0-9% ]+/g, " ").replace(/\s+/g, " ").trim();
+
+function scheduleSleep() {
+  clearTimeout(sleepTimer);
+  sleepTimer = setTimeout(() => { if (Date.now() >= awakeUntil && mode === "awake") setMode("listening"); }, Math.max(0, awakeUntil - Date.now()) + 50);
+}
+
+function startListening() {
+  if (!browserVoice || listening) return;
+  listening = true; setMode("listening"); setNote("");
+  boot();
+}
+function stopListening() {
+  listening = false;
+  try { rec && rec.abort(); } catch {}
+  awakeUntil = 0; setMode("idle"); setHeard("");
+}
+function boot() {
+  rec = new SR();
+  rec.continuous = true; rec.interimResults = true; rec.lang = "en-GB";
+  rec.onresult = e => {
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const res = e.results[i], text = res[0].transcript;
+      if (speaking || Date.now() < mutedUntil) continue;
+      if (!res.isFinal) {
+        setHeard(text.trim(), true);
+        if (WAKE.test(norm(text)) && mode === "listening") { awakeUntil = Date.now() + 7000; setMode("awake"); scheduleSleep(); }
+        continue;
+      }
+      onFinal(text);
+    }
+  };
+  rec.onerror = e => {
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+      setNote(location.protocol === "http:" && location.hostname !== "localhost"
+        ? "Chrome only allows the microphone on secure pages. Open the https:// address instead."
+        : "Microphone blocked. Allow it in the address bar, then tap the orb.");
+      stopListening();
+    } else if (e.error === "network") setNote("Speech recognition needs an internet connection.");
+  };
+  rec.onend = () => { if (listening) setTimeout(() => { try { rec.start(); } catch {} }, 250); };
+  try { rec.start(); } catch {}
+}
+
+function onFinal(text) {
+  const t = norm(text), w = WAKE.exec(t);
+  if (w) {
+    const rest = t.slice(w.index + w[0].length).trim();
+    if (rest) { command(rest); return; }
+    chime(); speak("Yes?");
+    awakeUntil = Date.now() + 7000; setMode("awake"); scheduleSleep(); setHeard("");
+    return;
+  }
+  if (Date.now() < awakeUntil) { command(t); return; }
+  setHeard("“" + text.trim() + "”");
+  if (mode === "awake") setMode("listening");
+}
+function command(text) {
+  setHeard("“" + text + "”");
+  awakeUntil = Date.now() + 7000; setMode("awake"); scheduleSleep();
+  send({ type: "text", text });
+}
+function onResult(r) {                 // the server tells us how the command went
+  if (!browserVoice) return;
+  if (r.sleep || r.ok) { awakeUntil = 0; setMode(listening ? "listening" : "idle"); }
+  else { awakeUntil = Date.now() + 6000; setMode("awake"); scheduleSleep(); }
+}
+
+/* ---------- controls ---------- */
+$("#orb").addEventListener("click", () => {
+  unlockAudio();
+  if (browserVoice) listening ? stopListening() : startListening();
+  else send({ type: "listen", value: mode === "idle" });
+});
+$("#btnOn").addEventListener("click", () => send({ type: "power", on: true }));
+$("#btnOff").addEventListener("click", () => send({ type: "power", on: false }));
+
+Object.entries(COLORS).forEach(([name, rgb]) => {
+  const el = document.createElement("button");
+  el.type = "button"; el.className = "swatch"; el.title = name; el.setAttribute("aria-label", name);
+  el.style.background = `rgb(${rgb.join(" ")})`;
+  el.addEventListener("click", () => send({ type: "color", rgb }));
+  $("#swatches").appendChild(el);
+});
+
+let t = null;
+$("#bright").addEventListener("input", e => {
+  clearTimeout(t);
+  t = setTimeout(() => send({ type: "bright", value: +e.target.value }), 120);
+});
+
+$("#typeForm").addEventListener("submit", e => {
+  e.preventDefault();
+  const v = $("#typeInput").value.trim();
+  if (v) { $("#typeInput").value = ""; setHeard("“" + v + "”"); send({ type: "text", text: v }); }
+});
+
+if ("speechSynthesis" in window) speechSynthesis.getVoices();
+if (!browserVoice) setNote("This browser has no speech recognition. Use Chrome or Edge to talk to Mist, or start the server with --server-mic.");
+setMode("offline");
+connect();
+</script>
+</body>
+</html>
